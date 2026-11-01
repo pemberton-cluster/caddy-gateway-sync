@@ -22,6 +22,7 @@ import base64
 import json
 import logging
 import os
+import re
 import ssl
 import threading
 import urllib.request
@@ -40,7 +41,6 @@ RECONCILE_INTERVAL = int(os.environ.get("RECONCILE_INTERVAL", "900"))
 PLAN_ONLY = os.environ.get("PLAN_ONLY", "0") == "1"
 
 MARKER_PREFIX = os.environ.get("MARKER_PREFIX", "[gitops] httproute:")
-FINALIZER = os.environ.get("CADDY_FINALIZER", "caddy-gateway-sync/httproute")
 # Adopting an unmarked Caddy entry requires this annotation = "true" on the
 # claiming HTTPRoute: adoption rewrites the entry now and deletes it when the
 # route goes away, so an unmarked entry must never be claimed silently.
@@ -55,6 +55,9 @@ API_SECRET = os.environ.get("OPNSENSE_API_SECRET", "")
 # OPNSENSE_TLS_INSECURE=1 is an explicit opt-out.
 _tls = ssl.create_default_context()
 if os.environ.get("OPNSENSE_TLS_INSECURE", "0") == "1":
+    if os.environ.get("OPNSENSE_TLS_CA"):
+        log.warning("OPNSENSE_TLS_INSECURE=1 and OPNSENSE_TLS_CA are both set: "
+                    "verification stays OFF, the CA is ignored")
     _tls.check_hostname = False
     _tls.verify_mode = ssl.CERT_NONE
 elif os.environ.get("OPNSENSE_TLS_CA"):
@@ -120,6 +123,11 @@ def _adopt_allowed(item):
     return (item.get("metadata", {}).get("annotations") or {}).get(ADOPT_ANNOTATION) == "true"
 
 
+# Hostnames end up verbatim in a generated Caddyfile: reject anything outside
+# the Gateway API hostname shape before it reaches OPNsense.
+_HOSTNAME_RE = re.compile(r"^(?:\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)+$")
+
+
 def public_routes(items):
     """{hostname: route_id} for routes attached to the http listener of the public Gateway."""
     desired = {}
@@ -141,6 +149,9 @@ def public_routes(items):
         if not attached:
             continue
         for h in spec.get("hostnames") or []:
+            if len(h) > 253 or not _HOSTNAME_RE.match(h):
+                log.warning("route %s: invalid hostname %r, skipping", rid, h)
+                continue
             prev = desired.get(h)
             if prev == rid:
                 continue
@@ -188,34 +199,12 @@ def _handle_matches(handle, reverse_uuid, rid):
 
 # --- reconcile ----------------------------------------------------------------
 
-def _patch_finalizers(ns, name, finalizers):
-    _custom_api().patch_namespaced_custom_object(
-        "gateway.networking.k8s.io", "v1", ns, "httproutes", name,
-        {"metadata": {"finalizers": finalizers}})
-
-
 def reconcile():
     """Full diff desired (cluster) vs live (Caddy), then apply. Idempotent."""
     items = _custom_api().list_cluster_custom_object(
         "gateway.networking.k8s.io", "v1", "httproutes").get("items") or []
     desired = public_routes(items)
-    manages = {rid for rid in desired.values()}
     items_by_rid = {_route_id(i["metadata"]["namespace"], i["metadata"]["name"]): i for i in items}
-
-    # Lifecycle: finalizer set on managed routes, removed when a route leaves the
-    # scope (parentRef/hostname removed) or after cleanup of a deletion.
-    for item in items:
-        meta = item["metadata"]
-        ns, name = meta["namespace"], meta["name"]
-        fins = meta.get("finalizers") or []
-        keep = (not meta.get("deletionTimestamp")) and _route_id(ns, name) in manages
-        if not keep and FINALIZER in fins:
-            log.info("route %s/%s: removing finalizer", ns, name)
-            if not PLAN_ONLY:
-                _patch_finalizers(ns, name, [f for f in fins if f != FINALIZER])
-        elif keep and FINALIZER not in fins:
-            if not PLAN_ONLY:
-                _patch_finalizers(ns, name, fins + [FINALIZER])
 
     reverses = _search_all("/api/caddy/reverse_proxy/searchReverseProxy")
     handles = _search_all("/api/caddy/reverse_proxy/searchHandle")

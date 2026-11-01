@@ -13,7 +13,7 @@ Create a default fully qualified app name.
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
 {{- $name := default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
-{{- printf "%s" $name }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 
@@ -39,7 +39,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 ServiceAccount name.
 */}}
 {{- define "caddy-gateway-sync.serviceAccountName" -}}
-{{- default (include "caddy-gateway-sync.fullname" .) .Values.serviceAccount.name }}
+{{- include "caddy-gateway-sync.fullname" . }}
 {{- end }}
 
 {{/*

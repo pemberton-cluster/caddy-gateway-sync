@@ -7,6 +7,8 @@ metadata:
 data:
   main.py: |-
 {{ .Files.Get "operator/main.py" | indent 4 }}
+  constraints.txt: |-
+{{ .Files.Get "operator/constraints.txt" | indent 4 }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -49,6 +51,7 @@ spec:
           image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["pip", "install", "--no-cache-dir", "--target", "/opt/deps",
+                   "--constraint", "/app/constraints.txt",
                    "kopf=={{ .Values.deps.kopf }}", "kubernetes=={{ .Values.deps.kubernetes }}"]
           env:
             - name: HOME
@@ -71,8 +74,11 @@ spec:
           args:
             - |
               export PYTHONPATH=/opt/deps
-              if [ -z "$OPNSENSE_API_KEY" ] || [ -z "$OPNSENSE_API_SECRET" ]; then
-                echo "caddy-gateway-sync: OPNsense credentials missing (secret {{ include "caddy-gateway-sync.secretName" . }}), operator standing by."
+              # Standby until every required setting exists; env from secrets is
+              # fixed at container start, so restart the Deployment after the
+              # Secret is created (or rely on a Reloader installation).
+              if [ -z "$OPNSENSE_URL" ] || [ -z "$OPNSENSE_API_KEY" ] || [ -z "$OPNSENSE_API_SECRET" ]; then
+                echo "caddy-gateway-sync: OPNsense connection incomplete, operator standing by."
                 sleep infinity
               else
                 exec python /app/main.py
@@ -95,8 +101,6 @@ spec:
               value: {{ .Values.reconcileInterval | quote }}
             - name: MARKER_PREFIX
               value: {{ .Values.markerPrefix | quote }}
-            - name: CADDY_FINALIZER
-              value: {{ .Values.finalizer | quote }}
             - name: PLAN_ONLY
               value: {{ .Values.planOnly | quote }}
             - name: OPNSENSE_URL

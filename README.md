@@ -3,10 +3,12 @@
 Kubernetes operator that reconciles public Gateway API HTTPRoutes with the
 **Caddy reverse proxy of an OPNsense firewall** (plugin **os-caddy**).
 
-One HTTPRoute attached to the HTTP listener of a public Gateway → one Caddy
-reverse proxy (`hostname`, TLS via Let's Encrypt DNS-01) that proxies to the
-Gateway VIP. Deleting the route removes the Caddy routing (finalizer). DNS
-(CNAME to the edge) is handled separately by external-dns.
+One HTTPRoute hostname attached to the HTTP listener of a public Gateway →
+one Caddy reverse proxy (TLS via Let's Encrypt DNS-01) that proxies to the
+Gateway VIP. Deleting the route removes the Caddy routing on the next
+reconcile (no finalizer: cleanup is done by the desired-state diff, so a
+deleted route never blocks in Terminating). DNS (CNAME to the edge) is
+handled separately by external-dns.
 
 ```
 HTTPRoute (parentRef public/http + hostname)
@@ -36,7 +38,14 @@ that is the only way to catch drift made by hand in the Caddy GUI.
 - **Deletion**: `delHandle` then `delReverseProxy` (plugin safeDelete order).
 - **A single reload** (`/api/caddy/service/reconfigure`) per pass, whatever the
   number of changes. A failed reload leaves Caddy on the previous config.
+- **Adoption requires intent**: claiming an unmarked manual Caddy entry needs
+  the annotation `caddy-gateway-sync/adopt: "true"` on the HTTPRoute —
+  adoption rewrites the entry (DNS-01, no access log) and deletes it when the
+  route goes away.
+- Hostnames are validated locally before reaching OPNsense.
 - Without credentials the pod stands by (`sleep infinity`) and touches nothing.
+  Env from Secrets is fixed at container start: restart the Deployment after
+  creating the Secret, or rely on a Reloader installation.
 
 ## Installing
 
@@ -106,7 +115,6 @@ ArgoCD users: multi-source Application with `oci://` (native OCI mode) or a
 | `upstream.host` / `upstream.port` | `10.10.16.38` / `"80"` | Gateway VIP Caddy proxies to |
 | `reconcileInterval` | `900` | Drift refresh interval (seconds) |
 | `markerPrefix` | `[gitops] httproute:` | Ownership marker in `description` |
-| `finalizer` | `caddy-gateway-sync/httproute` | Finalizer added to managed HTTPRoutes |
 | `planOnly` | `"0"` | `"1"` = log the diff, write nothing |
 | `image.repository` / `image.tag` | `python` / `3.12-slim` | Base image (deps installed at pod start) |
 | `deps.kopf` / `deps.kubernetes` | `1.45.2` / `37.0.1` | Pinned Python dependencies |
@@ -116,7 +124,9 @@ ArgoCD users: multi-source Application with `oci://` (native OCI mode) or a
 
 Runtime: [kopf](https://kopf.readthedocs.io/) (event/timer framework) and the
 [kubernetes](https://github.com/kubernetes-client/python) Python client,
-installed at pod start by an init container with pinned versions. Server side:
+installed at pod start by an init container; the full transitive closure is
+frozen in `operator/constraints.txt` (known debt: no hash pinning and no
+dedicated image yet — PyPI must stay reachable from the pod). Server side:
 an OPNsense firewall with the **os-caddy** plugin, and a Kubernetes cluster with
 Gateway API CRDs installed.
 
