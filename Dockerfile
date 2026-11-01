@@ -3,7 +3,7 @@ FROM python@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d
 # Dependencies are frozen in constraints.txt (transitive closure of
 # kopf/kubernetes, pip freeze from a clean venv); the image is built once per
 # chart release so the pod never talks to PyPI at runtime.
-COPY operator/constraints.txt /tmp/constraints.txt
+COPY charts/caddy-gateway-sync/operator/constraints.txt /tmp/constraints.txt
 RUN pip install --no-cache-dir --constraint /tmp/constraints.txt \
       kopf==1.45.2 kubernetes==37.0.1 \
     && rm /tmp/constraints.txt
