@@ -116,19 +116,19 @@ ArgoCD users: multi-source Application with `oci://` (native OCI mode) or a
 | `reconcileInterval` | `900` | Drift refresh interval (seconds) |
 | `markerPrefix` | `[gitops] httproute:` | Ownership marker in `description` |
 | `planOnly` | `"0"` | `"1"` = log the diff, write nothing |
-| `image.repository` / `image.tag` | `python` / `3.12-slim` | Base image (deps installed at pod start) |
-| `deps.kopf` / `deps.kubernetes` | `1.45.2` / `37.0.1` | Pinned Python dependencies |
+| `image.repository` | `ghcr.io/pemberton-cluster/caddy-gateway-sync/operator` | Dedicated operator image (built by CI) |
+| `image.tag` | `""` (chart appVersion) | Image tag |
+| `networkPolicy.enabled` / `opnsenseCidr` | `true` / `""` | Default-deny netpol; set the firewall IP/subnet |
 | `resources`, `securityContext`, `podAnnotations`, `nodeSelector`, `tolerations`, `affinity` | see `values.yaml` | Workload tuning |
 
 ## Dependencies
 
 Runtime: [kopf](https://kopf.readthedocs.io/) (event/timer framework) and the
 [kubernetes](https://github.com/kubernetes-client/python) Python client,
-installed at pod start by an init container; the full transitive closure is
-frozen in `operator/constraints.txt` (known debt: no hash pinning and no
-dedicated image yet — PyPI must stay reachable from the pod). Server side:
-an OPNsense firewall with the **os-caddy** plugin, and a Kubernetes cluster with
-Gateway API CRDs installed.
+baked into a dedicated image built by CI (base image digest-pinned, full
+transitive closure frozen in `operator/constraints.txt`) — the pod never talks
+to PyPI at runtime. Server side: an OPNsense firewall with the **os-caddy**
+plugin, and a Kubernetes cluster with Gateway API CRDs installed.
 
 ## OPNsense API gotchas
 
@@ -137,18 +137,13 @@ Gateway API CRDs installed.
 - **A POST without a body returns 400** → send `{}`.
 - Endpoints live under `/api/caddy/*` (handled by the plugin, not core FRR).
 
-## Pulling from the private registry
+## Network policy
 
-The chart lives in a private repository: anonymous pulls are denied. Log in
-once per machine with a PAT carrying `read:packages`:
-
-```bash
-helm registry login ghcr.io  # or: docker login ghcr.io
-```
-
-While the repository is private, the GitHub Pages HTTP repository cannot be
-served (GitHub Free plan) — only the OCI ref works. Make the repo public to
-enable `https://pemberton-cluster.github.io/caddy-gateway-sync`.
+The chart ships a default-deny NetworkPolicy (no ingress; egress limited to
+DNS, the Kubernetes API server and the OPNsense API). Set
+`networkPolicy.opnsenseCidr` to the firewall IP/subnet — until you do, the
+operator cannot reach OPNsense:
+`--set networkPolicy.opnsenseCidr=192.168.1.1/32`.
 
 ## Publishing the chart (maintainers)
 

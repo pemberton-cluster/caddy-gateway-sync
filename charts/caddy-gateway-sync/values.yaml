@@ -44,17 +44,13 @@ planOnly: "0"
 
 # -- Workload ------------------------------------------------------------------
 
+# Dedicated image built by CI: python:3.12-slim (digest-pinned) + the
+# constraints.txt closure preinstalled. The pod never talks to PyPI.
 image:
-  repository: python
-  tag: "3.12-slim"
+  repository: ghcr.io/pemberton-cluster/caddy-gateway-sync/operator
+  # Defaults to the chart appVersion when left empty.
+  tag: ""
   pullPolicy: IfNotPresent
-
-# Python dependencies installed at pod start by the init container. The full
-# transitive closure is frozen in operator/constraints.txt (DEBT: no hashes and
-# no dedicated image yet - PyPI must stay reachable from the pod).
-deps:
-  kopf: "1.45.2"
-  kubernetes: "37.0.1"
 
 resources:
   requests:
@@ -73,6 +69,13 @@ securityContext:
 
 podAnnotations:
   reloader.stakater.com/auto: "true"
+
+# NetworkPolicy: default-deny, allowing only DNS, the Kubernetes API server
+# and the OPNsense API. Set opnsenseCidr to the firewall IP or subnet; while
+# it is empty, no route to OPNsense is allowed and the operator cannot work.
+networkPolicy:
+  enabled: true
+  opnsenseCidr: ""
 
 nodeSelector: {}
 tolerations: []

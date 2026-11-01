@@ -46,29 +46,9 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      initContainers:
-        - name: deps
-          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["pip", "install", "--no-cache-dir", "--target", "/opt/deps",
-                   "--constraint", "/app/constraints.txt",
-                   "kopf=={{ .Values.deps.kopf }}", "kubernetes=={{ .Values.deps.kubernetes }}"]
-          env:
-            - name: HOME
-              value: /tmp
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-            readOnlyRootFilesystem: true
-          volumeMounts:
-            - name: deps
-              mountPath: /opt/deps
-            - name: tmp
-              mountPath: /tmp
       containers:
         - name: operator
-          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/bin/sh", "-c"]
           args:
