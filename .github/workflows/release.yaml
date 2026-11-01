@@ -43,7 +43,7 @@ jobs:
         run: printf '%s' "$TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Push chart to OCI registry
-        run: helm push .packaged/*.tgz oci://ghcr.io/pemberton-cluster/caddy-gateway-sync
+        run: helm push .packaged/*.tgz oci://ghcr.io/pemberton-cluster/charts
 
       - name: Publish chart to GitHub Pages (HTTP repo)
         run: |

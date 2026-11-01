@@ -78,7 +78,7 @@ that is the only way to catch drift made by hand in the Caddy GUI.
    ```bash
    # From the OCI registry
    helm install caddy-gateway-sync \
-     oci://ghcr.io/pemberton-cluster/caddy-gateway-sync --version 0.1.0 \
+     oci://ghcr.io/pemberton-cluster/charts/caddy-gateway-sync --version 0.1.0 \
      --namespace gateway-system \
      --set opnsense.existingSecret=caddy-gateway-sync
 
@@ -130,5 +130,5 @@ Gateway API CRDs installed.
 ## Publishing the chart (maintainers)
 
 Pushing to `main` triggers the release workflow: `helm lint` + template check,
-then the chart is published to **both** `oci://ghcr.io/pemberton-cluster/caddy-gateway-sync`
+then the chart is published to **both** `oci://ghcr.io/pemberton-cluster/charts/caddy-gateway-sync`
 and the GitHub Pages HTTP repository (`index.yaml` on `gh-pages`).
