@@ -127,6 +127,19 @@ Gateway API CRDs installed.
 - **A POST without a body returns 400** → send `{}`.
 - Endpoints live under `/api/caddy/*` (handled by the plugin, not core FRR).
 
+## Pulling from the private registry
+
+The chart lives in a private repository: anonymous pulls are denied. Log in
+once per machine with a PAT carrying `read:packages`:
+
+```bash
+helm registry login ghcr.io  # or: docker login ghcr.io
+```
+
+While the repository is private, the GitHub Pages HTTP repository cannot be
+served (GitHub Free plan) — only the OCI ref works. Make the repo public to
+enable `https://pemberton-cluster.github.io/caddy-gateway-sync`.
+
 ## Publishing the chart (maintainers)
 
 Pushing to `main` triggers the release workflow: `helm lint` + template check,
