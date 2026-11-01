@@ -27,7 +27,7 @@ spec:
       ports:
         - { port: 53, protocol: UDP }
         - { port: 53, protocol: TCP }
-    # Kubernetes API server (static pod in kube-system on Talos-like clusters).
+    # Kubernetes API server (pod-backed control planes).
     - to:
         - namespaceSelector:
             matchLabels:
@@ -37,6 +37,18 @@ spec:
               k8s-app: kube-apiserver
       ports:
         - { port: 443, protocol: TCP }
+    {{- with .Values.networkPolicy.kubeApiCidrs }}
+    # Kubernetes API server when it runs hostNetwork (Talos, k3s...): the
+    # ClusterIP DNATs to node IPs, which pod selectors cannot match.
+    - to:
+        {{- range . }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - { port: 6443, protocol: TCP }
+        - { port: 443, protocol: TCP }
+    {{- end }}
     {{- if .Values.networkPolicy.opnsenseCidr }}
     # OPNsense API.
     - to:

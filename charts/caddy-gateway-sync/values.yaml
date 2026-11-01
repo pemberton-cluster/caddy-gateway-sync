@@ -76,6 +76,8 @@ podAnnotations:
 networkPolicy:
   enabled: true
   opnsenseCidr: ""
+  # Node/control-plane CIDRs when the API server runs hostNetwork (Talos, k3s).
+  kubeApiCidrs: []
 
 nodeSelector: {}
 tolerations: []
