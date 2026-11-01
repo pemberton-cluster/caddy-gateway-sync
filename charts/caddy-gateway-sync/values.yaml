@@ -75,6 +75,10 @@ podAnnotations:
 # it is empty, no route to OPNsense is allowed and the operator cannot work.
 networkPolicy:
   enabled: true
+  # Emit a CiliumNetworkPolicy instead of a standard NetworkPolicy: needed when
+  # the API server runs hostNetwork (Talos, k3s), where the traffic carries the
+  # Cilium "host" entity that a standard NetworkPolicy cannot allow.
+  cilium: false
   opnsenseCidr: ""
   # Node/control-plane CIDRs when the API server runs hostNetwork (Talos, k3s).
   kubeApiCidrs: []

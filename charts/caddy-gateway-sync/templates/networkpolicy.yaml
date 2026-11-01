@@ -1,4 +1,45 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- if .Values.networkPolicy.cilium }}
+# CiliumNetworkPolicy: the kube-apiserver runs hostNetwork on Talos-like
+# clusters, so its traffic carries the "host" entity which a standard
+# NetworkPolicy cannot allow.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "caddy-gateway-sync.fullname" . }}
+  labels:
+    {{- include "caddy-gateway-sync.labels" . | nindent 4 }}
+specs:
+  - endpointSelector:
+      matchLabels:
+        {{- include "caddy-gateway-sync.selectorLabels" . | nindent 8 }}
+    ingress: []
+    egress:
+      # DNS (kube-dns / CoreDNS).
+      - toEndpoints:
+          - matchLabels:
+              k8s:io.kubernetes.pod.namespace: kube-system
+              k8s:k8s-app: kube-dns
+        toPorts:
+          - ports:
+              - { port: "53", protocol: UDP }
+              - { port: "53", protocol: TCP }
+      # Kubernetes API server (hostNetwork static pods).
+      - toEntities: [host]
+        toPorts:
+          - ports:
+              - { port: "443", protocol: TCP }
+              - { port: "6443", protocol: TCP }
+      {{- if .Values.networkPolicy.opnsenseCidr }}
+      # OPNsense API.
+      - toCIDR:
+          - {{ .Values.networkPolicy.opnsenseCidr | quote }}
+        toPorts:
+          - ports:
+              - { port: "8443", protocol: TCP }
+      {{- end }}
+{{- else }}
+
 # Default-deny both ways. The operator only needs: DNS, the Kubernetes API
 # server, and the OPNsense API (given by networkPolicy.opnsenseCidr).
 apiVersion: networking.k8s.io/v1
@@ -57,4 +98,5 @@ spec:
       ports:
         - { port: 8443, protocol: TCP }
     {{- end }}
+{{- end }}
 {{- end }}
