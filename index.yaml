@@ -2,8 +2,29 @@ apiVersion: v1
 entries:
   caddy-gateway-sync:
   - apiVersion: v2
+    appVersion: 0.3.3
+    created: "2026-11-01T19:14:02.505560003Z"
+    description: 'Kubernetes operator that reconciles public Gateway API HTTPRoutes
+      with an OPNsense Caddy reverse proxy (os-caddy plugin): one Caddy reverse proxy
+      + handle per HTTPRoute hostname, TLS terminated at the edge via Let''s Encrypt
+      DNS-01.'
+    digest: 5d0c85592ec536effa01d23b47a8ca78dac9fb100507117342f3bf89d172899c
+    home: https://github.com/pemberton-cluster/caddy-gateway-sync
+    keywords:
+    - gateway-api
+    - opnsense
+    - caddy
+    - gitops
+    maintainers:
+    - name: pemberton-cluster
+    name: caddy-gateway-sync
+    type: application
+    urls:
+    - https://pemberton-cluster.github.io/caddy-gateway-sync/caddy-gateway-sync-0.3.3.tgz
+    version: 0.3.3
+  - apiVersion: v2
     appVersion: 0.3.2
-    created: "2026-11-01T19:04:44.234277369Z"
+    created: "2026-11-01T19:14:02.504997108Z"
     description: 'Kubernetes operator that reconciles public Gateway API HTTPRoutes
       with an OPNsense Caddy reverse proxy (os-caddy plugin): one Caddy reverse proxy
       + handle per HTTPRoute hostname, TLS terminated at the edge via Let''s Encrypt
@@ -24,7 +45,7 @@ entries:
     version: 0.3.2
   - apiVersion: v2
     appVersion: 0.3.1
-    created: "2026-11-01T19:04:44.233342117Z"
+    created: "2026-11-01T19:14:02.504447598Z"
     description: 'Kubernetes operator that reconciles public Gateway API HTTPRoutes
       with an OPNsense Caddy reverse proxy (os-caddy plugin): one Caddy reverse proxy
       + handle per HTTPRoute hostname, TLS terminated at the edge via Let''s Encrypt
@@ -45,7 +66,7 @@ entries:
     version: 0.3.1
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-11-01T19:04:44.232584725Z"
+    created: "2026-11-01T19:14:02.503943573Z"
     description: 'Kubernetes operator that reconciles public Gateway API HTTPRoutes
       with an OPNsense Caddy reverse proxy (os-caddy plugin): one Caddy reverse proxy
       + handle per HTTPRoute hostname, TLS terminated at the edge via Let''s Encrypt
@@ -66,7 +87,7 @@ entries:
     version: 0.3.0
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-11-01T19:04:44.231842172Z"
+    created: "2026-11-01T19:14:02.503373585Z"
     description: 'Kubernetes operator that reconciles public Gateway API HTTPRoutes
       with an OPNsense Caddy reverse proxy (os-caddy plugin): one Caddy reverse proxy
       + handle per HTTPRoute hostname, TLS terminated at the edge via Let''s Encrypt
@@ -87,7 +108,7 @@ entries:
     version: 0.2.0
   - apiVersion: v2
     appVersion: 0.1.0
-    created: "2026-11-01T19:04:44.231215424Z"
+    created: "2026-11-01T19:14:02.502831519Z"
     description: 'Kubernetes operator that reconciles public Gateway API HTTPRoutes
       with an OPNsense Caddy reverse proxy (os-caddy plugin): one Caddy reverse proxy
       + handle per HTTPRoute hostname, TLS terminated at the edge via Let''s Encrypt
@@ -106,4 +127,4 @@ entries:
     urls:
     - https://pemberton-cluster.github.io/caddy-gateway-sync/caddy-gateway-sync-0.1.0.tgz
     version: 0.1.0
-generated: "2026-11-01T19:04:44.230330716Z"
+generated: "2026-11-01T19:14:02.501983349Z"
