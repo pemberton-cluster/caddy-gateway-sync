@@ -1,0 +1,25 @@
+apiVersion: v1
+entries:
+  caddy-gateway-sync:
+  - apiVersion: v2
+    appVersion: 0.1.0
+    created: "2026-11-01T17:58:19.588394225Z"
+    description: 'Kubernetes operator that reconciles public Gateway API HTTPRoutes
+      with an OPNsense Caddy reverse proxy (os-caddy plugin): one Caddy reverse proxy
+      + handle per HTTPRoute hostname, TLS terminated at the edge via Let''s Encrypt
+      DNS-01.'
+    digest: caf3f933f37e7f218bd6dbaa3f80f086c5a24cb2bcc26f8f48cde70aa16c760b
+    home: https://github.com/pemberton-cluster/caddy-gateway-sync
+    keywords:
+    - gateway-api
+    - opnsense
+    - caddy
+    - gitops
+    maintainers:
+    - name: pemberton-cluster
+    name: caddy-gateway-sync
+    type: application
+    urls:
+    - https://pemberton-cluster.github.io/caddy-gateway-sync/caddy-gateway-sync-0.1.0.tgz
+    version: 0.1.0
+generated: "2026-11-01T17:58:19.587413229Z"
