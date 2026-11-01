@@ -28,7 +28,9 @@ jobs:
 
       - name: Read the chart version
         id: chartver
-        run: echo "version=$(sed -n 's/^version: //p' charts/caddy-gateway-sync/Chart.yaml)" >> "$GITHUB_OUTPUT"
+        run: >
+          echo "version=$(sed -n 's/^version: //p' charts/caddy-gateway-sync/Chart.yaml)"
+          >> "$GITHUB_OUTPUT"
 
       - name: Lint and template the chart
         run: |
