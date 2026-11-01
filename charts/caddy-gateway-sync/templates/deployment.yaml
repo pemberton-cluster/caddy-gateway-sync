@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "caddy-gateway-sync.fullname" . }}
+  labels:
+    {{- include "caddy-gateway-sync.labels" . | nindent 4 }}
+data:
+  main.py: |-
+{{ .Files.Get "operator/main.py" | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "caddy-gateway-sync.fullname" . }}
+  labels:
+    {{- include "caddy-gateway-sync.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # A single watcher of events at a time (no leader election).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "caddy-gateway-sync.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "caddy-gateway-sync.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "caddy-gateway-sync.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: deps
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["pip", "install", "--no-cache-dir", "--target", "/opt/deps",
+                   "kopf=={{ .Values.deps.kopf }}", "kubernetes=={{ .Values.deps.kubernetes }}"]
+          env:
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: deps
+              mountPath: /opt/deps
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: operator
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              export PYTHONPATH=/opt/deps
+              if [ -z "$OPNSENSE_API_KEY" ] || [ -z "$OPNSENSE_API_SECRET" ]; then
+                echo "caddy-gateway-sync: OPNsense credentials missing (secret {{ include "caddy-gateway-sync.secretName" . }}), operator standing by."
+                sleep infinity
+              else
+                exec python /app/main.py
+              fi
+          env:
+            # kopf (getpass.getuser) cannot resolve uid 65532 without a passwd entry
+            - name: USER
+              value: operator
+            - name: GATEWAY_NAMESPACE
+              value: {{ .Values.gateway.namespace | quote }}
+            - name: GATEWAY_NAME
+              value: {{ .Values.gateway.name | quote }}
+            - name: LISTENER_HTTP
+              value: {{ .Values.gateway.listener | quote }}
+            - name: CADDY_UPSTREAM_HOST
+              value: {{ .Values.upstream.host | quote }}
+            - name: CADDY_UPSTREAM_PORT
+              value: {{ .Values.upstream.port | quote }}
+            - name: RECONCILE_INTERVAL
+              value: {{ .Values.reconcileInterval | quote }}
+            - name: MARKER_PREFIX
+              value: {{ .Values.markerPrefix | quote }}
+            - name: CADDY_FINALIZER
+              value: {{ .Values.finalizer | quote }}
+            - name: PLAN_ONLY
+              value: {{ .Values.planOnly | quote }}
+            - name: OPNSENSE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ include "caddy-gateway-sync.secretName" . }}, key: OPNSENSE_URL, optional: true }
+            - name: OPNSENSE_API_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ include "caddy-gateway-sync.secretName" . }}, key: OPNSENSE_API_KEY, optional: true }
+            - name: OPNSENSE_API_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ include "caddy-gateway-sync.secretName" . }}, key: OPNSENSE_API_SECRET, optional: true }
+            - name: OPNSENSE_TLS_INSECURE
+              value: {{ .Values.opnsense.tlsInsecure | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+            - name: deps
+              mountPath: /opt/deps
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: script
+          configMap:
+            name: {{ include "caddy-gateway-sync.fullname" . }}
+        - name: deps
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

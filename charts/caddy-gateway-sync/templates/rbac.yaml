@@ -1,13 +1,9 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: caddy-gateway-sync
-  namespace: gateway-system
----
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: caddy-gateway-sync
+  name: {{ include "caddy-gateway-sync.fullname" . }}
+  labels:
+    {{- include "caddy-gateway-sync.labels" . | nindent 4 }}
 rules:
   - apiGroups:
       - gateway.networking.k8s.io
@@ -23,12 +19,14 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: caddy-gateway-sync
+  name: {{ include "caddy-gateway-sync.fullname" . }}
+  labels:
+    {{- include "caddy-gateway-sync.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: caddy-gateway-sync
+  name: {{ include "caddy-gateway-sync.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: caddy-gateway-sync
-    namespace: gateway-system
+    name: {{ include "caddy-gateway-sync.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

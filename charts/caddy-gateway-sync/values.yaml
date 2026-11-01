@@ -1,0 +1,82 @@
+# Default values for caddy-gateway-sync.
+
+# -- Connection to the OPNsense API --------------------------------------------
+
+opnsense:
+  # Base URL of the OPNsense API, e.g. https://opnsense.lan:8443
+  url: ""
+  # API credentials. Either create a Secret yourself and set existingSecret,
+  # or set apiKey/apiSecret to have the chart create one (NOT recommended for
+  # GitOps: prefer an external secret manager or a SealedSecret).
+  existingSecret: ""
+  apiKey: ""
+  apiSecret: ""
+  # Verify the OPNsense API TLS certificate. Keep false ONLY when the firewall
+  # uses a self-signed certificate; prefer trusting its CA instead.
+  tlsInsecure: "1"
+
+# -- What to watch and where to proxy ------------------------------------------
+
+gateway:
+  # Namespace and name of the Gateway whose HTTP listener is observed.
+  namespace: gateway-system
+  name: public
+  # Name of the HTTP listener on that Gateway.
+  listener: http
+
+upstream:
+  # VIP of the Gateway: Caddy proxies every public hostname to it.
+  host: 10.10.16.38
+  port: "80"
+
+# -- Reconciler behavior -------------------------------------------------------
+
+# Drift refresh interval in seconds (Caddy cannot emit webhooks).
+reconcileInterval: 900
+# Ownership marker written in the Caddy entry description.
+markerPrefix: "[gitops] httproute:"
+# Finalizer added to managed HTTPRoutes.
+finalizer: caddy-gateway-sync/httproute
+# Log the diff without writing anything (debugging aid).
+planOnly: "0"
+
+# -- Workload ------------------------------------------------------------------
+
+image:
+  repository: python
+  tag: "3.12-slim"
+  pullPolicy: IfNotPresent
+
+# Python dependencies installed at pod start by the init container.
+deps:
+  kopf: "1.45.2"
+  kubernetes: "37.0.1"
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+podAnnotations:
+  reloader.stakater.com/auto: "true"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # The chart always creates the ServiceAccount it needs.
+  name: ""

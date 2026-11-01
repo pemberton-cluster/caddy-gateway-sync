@@ -1,58 +1,52 @@
 # caddy-gateway-sync
 
-Opérateur Kubernetes qui réconcilie les HTTPRoutes d'un Gateway public avec le
-reverse proxy **Caddy** d'un OPNsense (plugin **os-caddy**).
+Kubernetes operator that reconciles public Gateway API HTTPRoutes with the
+**Caddy reverse proxy of an OPNsense firewall** (plugin **os-caddy**).
 
-Une HTTPRoute attachée au listener HTTP du Gateway → un reverse proxy Caddy
-(`hostname`, TLS Let's Encrypt DNS-01) qui proxifie vers le VIP du Gateway.
-Supprimer la route retire le routage Caddy (finalizer). Le DNS (CNAME vers
-l'edge) est géré séparément par external-dns.
+One HTTPRoute attached to the HTTP listener of a public Gateway → one Caddy
+reverse proxy (`hostname`, TLS via Let's Encrypt DNS-01) that proxies to the
+Gateway VIP. Deleting the route removes the Caddy routing (finalizer). DNS
+(CNAME to the edge) is handled separately by external-dns.
 
 ```
 HTTPRoute (parentRef public/http + hostname)
   ├─ external-dns ────────► CNAME <hostname> -> <edge-host> (Cloudflare)
-  └─ caddy-gateway-sync ──► API os-caddy ──► Caddy :
+  └─ caddy-gateway-sync ──► OPNsense API ──► Caddy:
         reverse proxy  : <hostname>, TLS Let's Encrypt (DNS-01)
-        handle         : reverse_proxy -> <gateway VIP>:80 (Host préservé)
+        handle         : reverse_proxy -> <gateway VIP>:80 (Host preserved)
 ```
 
-## Modèle de synchronisation
+## Sync model
 
-- **Push** côté cluster : watch de l'API server (kopf), aucun polling.
-- **Refresh interval** côté OPNsense (`RECONCILE_INTERVAL`, 900 s par défaut) :
-  os-caddy ne peut pas émettre de webhook — c'est le seul moyen de détecter une
-  dérive faite à la main dans la GUI Caddy.
+Mirrors ArgoCD: the cluster side is pure **push** (watches the API server, no
+polling), while the OPNsense side is a **refresh interval**
+(`reconcileInterval`, 900 s by default) because os-caddy cannot emit webhooks —
+that is the only way to catch drift made by hand in the Caddy GUI.
 
-## Garde-fous
+## Safety rails
 
-- **Marqueur d'ownership** dans `description` : `[gitops] httproute:<ns>/<name>`
-  (configurable via `MARKER_PREFIX`). Seules ces entrées sont modifiées/supprimées.
-- **Adoption** : une entrée manuelle de même domaine existante est marquée, pas
-  dupliquée (Caddy refuse un Caddyfile avec deux sites de même adresse).
-- **Suppression** : `delHandle` puis `delReverseProxy` (safeDelete du plugin).
-- **Un seul reload** (`/api/caddy/service/reconfigure`) par passage. Un reload
-  qui échoue laisse Caddy sur l'ancienne config.
-- Sans credentials, le pod reste en veille (`sleep infinity`) sans rien toucher.
+- **Ownership marker** in the Caddy entry `description`:
+  `[gitops] httproute:<ns>/<name>` (configurable). Only marked entries are
+  modified or deleted; manual entries are never touched.
+- **Adoption**: an existing manual entry for the same hostname is marked, not
+  duplicated (Caddy refuses a Caddyfile with two sites at the same address).
+- **Deletion**: `delHandle` then `delReverseProxy` (plugin safeDelete order).
+- **A single reload** (`/api/caddy/service/reconfigure`) per pass, whatever the
+  number of changes. A failed reload leaves Caddy on the previous config.
+- Without credentials the pod stands by (`sleep infinity`) and touches nothing.
 
-## Configuration (env)
+## Installing
 
-| Variable | Défaut | Rôle |
-|---|---|---|
-| `OPNSENSE_URL` | — | Base de l'API OPNsense (ex. `https://10.10.100.254:8443`) |
-| `OPNSENSE_API_KEY` / `OPNSENSE_API_SECRET` | — | Clé API (privilège minimal : Services > Caddy, Reverse Proxy, Diagnostics) |
-| `OPNSENSE_TLS_INSECURE` | `1` | `0` = vérifier le certificat TLS de l'API |
-| `GATEWAY_NAMESPACE` / `GATEWAY_NAME` | `gateway-system` / `public` | Gateway à observer |
-| `LISTENER_HTTP` | `http` | Listener HTTP du Gateway |
-| `CADDY_UPSTREAM_HOST` / `CADDY_UPSTREAM_PORT` | `10.10.16.38` / `80` | VIP du Gateway, cible des reverse proxies |
-| `RECONCILE_INTERVAL` | `900` | Refresh de dérive, en secondes |
-| `MARKER_PREFIX` | `[gitops] httproute:` | Marqueur d'ownership dans `description` |
-| `PLAN_ONLY` | `0` | `1` = log le diff sans rien écrire |
+1. On OPNsense, create a dedicated user with minimal privileges —
+   **Services: Caddy** is enough (screenshot below) — then generate an API key
+   (System > Access > Users > API key `+`).
 
-## Déploiement
+   ![OPNsense Edit User form with the "Services: Caddy" privilege selected](docs/images/opnsense-user-privileges.png)
 
-1. Créer le namespace, user + clé API OPNsense à privilège minimal, règle pf
-   (`pass in` src LAN → This Firewall, port API).
-2. Sceller/poser le Secret :
+2. Allow the API port from the cluster on the firewall
+   (`pass in` from LAN/cluster subnet → This Firewall, port 8443).
+
+3. Provide credentials either through your own Secret:
 
    ```yaml
    apiVersion: v1
@@ -61,19 +55,71 @@ HTTPRoute (parentRef public/http + hostname)
      name: caddy-gateway-sync
      namespace: gateway-system
    stringData:
-     OPNSENSE_URL: https://<opnsense>:8443
+     OPNSENSE_URL: https://opnsense.example.lan:8443
      OPNSENSE_API_KEY: <key>
      OPNSENSE_API_SECRET: <secret>
    ```
 
-   L'annotation `reloader.stakater.com/auto` redémarre le pod quand le Secret change
-   (uniquement s'il existait déjà au déploiement — sinon `kubectl rollout restart`).
-3. `kubectl apply -k .` (ou l'inclure dans ArgoCD comme source kustomize ; le
-   Secret reste à sceller à part).
+   ... and set `opnsense.existingSecret=caddy-gateway-sync`, or let the chart
+   create the Secret from `opnsense.apiKey`/`apiSecret` values (fine for
+   testing, avoid for GitOps — prefer SealedSecrets / ExternalSecrets).
 
-## Gotchas API OPNsense (os-caddy)
+4. Install the chart:
 
-- **GET avec `Content-Type: application/json` sans corps = 400 "Invalid JSON syntax"**
-  → ne poser le header que s'il y a un body.
-- **POST sans corps = 400** → envoyer `{}`.
-- Les endpoints vivent sous `/api/caddy/*` (pas `/api/frr/*` ni `/api/quagga/*`).
+   ```bash
+   # From the OCI registry
+   helm install caddy-gateway-sync \
+     oci://ghcr.io/pemberton-cluster/caddy-gateway-sync --version 0.1.0 \
+     --namespace gateway-system \
+     --set opnsense.existingSecret=caddy-gateway-sync
+
+   # Or from the HTTP chart repository
+   helm repo add caddy-gateway-sync https://pemberton-cluster.github.io/caddy-gateway-sync
+   helm repo update
+   helm install caddy-gateway-sync caddy-gateway-sync/caddy-gateway-sync \
+     --namespace gateway-system \
+     --set opnsense.existingSecret=caddy-gateway-sync
+   ```
+
+ArgoCD users: multi-source Application with `oci://` (native OCI mode) or a
+`helm` source pointing at the HTTP repo, `$values` ref for the values file.
+
+## Configuration
+
+| Key | Default | Description |
+|---|---|---|
+| `opnsense.url` | `""` | Base URL of the OPNsense API |
+| `opnsense.existingSecret` | `""` | Use this Secret instead of creating one |
+| `opnsense.apiKey` / `opnsense.apiSecret` | `""` | Credentials when the chart creates the Secret |
+| `opnsense.tlsInsecure` | `"1"` | `"0"` = verify the API TLS certificate (prefer trusting the firewall CA) |
+| `gateway.namespace` / `gateway.name` | `gateway-system` / `public` | Gateway to observe |
+| `gateway.listener` | `http` | HTTP listener name on that Gateway |
+| `upstream.host` / `upstream.port` | `10.10.16.38` / `"80"` | Gateway VIP Caddy proxies to |
+| `reconcileInterval` | `900` | Drift refresh interval (seconds) |
+| `markerPrefix` | `[gitops] httproute:` | Ownership marker in `description` |
+| `finalizer` | `caddy-gateway-sync/httproute` | Finalizer added to managed HTTPRoutes |
+| `planOnly` | `"0"` | `"1"` = log the diff, write nothing |
+| `image.repository` / `image.tag` | `python` / `3.12-slim` | Base image (deps installed at pod start) |
+| `deps.kopf` / `deps.kubernetes` | `1.45.2` / `37.0.1` | Pinned Python dependencies |
+| `resources`, `securityContext`, `podAnnotations`, `nodeSelector`, `tolerations`, `affinity` | see `values.yaml` | Workload tuning |
+
+## Dependencies
+
+Runtime: [kopf](https://kopf.readthedocs.io/) (event/timer framework) and the
+[kubernetes](https://github.com/kubernetes-client/python) Python client,
+installed at pod start by an init container with pinned versions. Server side:
+an OPNsense firewall with the **os-caddy** plugin, and a Kubernetes cluster with
+Gateway API CRDs installed.
+
+## OPNsense API gotchas
+
+- **A GET carrying `Content-Type: application/json` with no body returns 400
+  "Invalid JSON syntax"** → only set the header when a body is present.
+- **A POST without a body returns 400** → send `{}`.
+- Endpoints live under `/api/caddy/*` (handled by the plugin, not core FRR).
+
+## Publishing the chart (maintainers)
+
+Pushing to `main` triggers the release workflow: `helm lint` + template check,
+then the chart is published to **both** `oci://ghcr.io/pemberton-cluster/caddy-gateway-sync`
+and the GitHub Pages HTTP repository (`index.yaml` on `gh-pages`).

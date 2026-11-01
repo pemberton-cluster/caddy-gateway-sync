@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Réconcilie les HTTPRoutes du Gateway `public` avec le reverse proxy Caddy de skillout.
+"""Reconcile HTTPRoutes of a public Gateway with an OPNsense Caddy reverse proxy.
 
-Modèle ArgoCD : le côté cluster est du push pur (watch API server, aucun polling),
-le côté OPNsense est rafraîchi périodiquement (RECONCILE_INTERVAL) car os-caddy
-ne peut pas émettre de webhook — c'est l'équivalent du refresh interval d'ArgoCD,
-qui couvre la dérive faite à la main dans la GUI Caddy.
+Sync model mirrors ArgoCD: the cluster side is pure push (watches the API server,
+no polling), while the OPNsense side is refreshed periodically (RECONCILE_INTERVAL)
+because os-caddy cannot emit webhooks — this is the equivalent of ArgoCD's refresh
+interval, which catches drift made by hand in the Caddy GUI.
 
-Ownership : seules les entrées Caddy dont `description` commence par MARKER_PREFIX
-sont modifiées ou supprimées. Une entrée existante de même domaine non marquée est
-ADOPTÉE (marquée), jamais dupliquée : Caddy refuse de charger un Caddyfile avec
-deux sites de même adresse.
+Ownership: only Caddy entries whose `description` starts with MARKER_PREFIX are
+modified or deleted. An existing unmarked entry for the same hostname is ADOPTED
+(marked), never duplicated: Caddy refuses to load a Caddyfile with two sites for
+the same address.
 
-Convention de route publique : parentRef -> Gateway GATEWAY_NAME/GATEWAY_NAMESPACE
-avec sectionName `http` (ou sans sectionName). Une route attachée uniquement à un
-listener https-* n'est pas joignable via l'upstream :80 et n'est donc pas synchronisée.
+Public route convention: parentRef -> Gateway GATEWAY_NAME/GATEWAY_NAMESPACE with
+sectionName `http` (or no sectionName). A route attached only to an https-* listener
+is not reachable through the :80 upstream and is therefore not synced.
 """
 
 import base64
@@ -38,7 +38,7 @@ RECONCILE_INTERVAL = int(os.environ.get("RECONCILE_INTERVAL", "900"))
 PLAN_ONLY = os.environ.get("PLAN_ONLY", "0") == "1"
 
 MARKER_PREFIX = os.environ.get("MARKER_PREFIX", "[gitops] httproute:")
-FINALIZER = "caddy.skillout.delta-net.ovh/httproute"
+FINALIZER = os.environ.get("CADDY_FINALIZER", "caddy-gateway-sync/httproute")
 
 OPNSENSE_URL = os.environ.get("OPNSENSE_URL", "").rstrip("/")
 API_KEY = os.environ.get("OPNSENSE_API_KEY", "")
@@ -49,14 +49,14 @@ if os.environ.get("OPNSENSE_TLS_INSECURE", "1") == "1":
     _tls.check_hostname = False
     _tls.verify_mode = ssl.CERT_NONE
 
-# Sérialise les écritures OPNsense + le reload : jamais deux reconfigure concurrents.
+# Serializes OPNsense writes + reload: never two concurrent reconfigures.
 _lock = threading.Lock()
 
 _custom = None
 
 
 def _custom_api():
-    """Client créé paresseusement : la config in-cluster n'est pas chargée à l'import."""
+    """Lazily created client: in-cluster config is not loaded at import time."""
     global _custom
     if _custom is None:
         k8s_config.load_incluster_config()
@@ -64,10 +64,10 @@ def _custom_api():
     return _custom
 
 
-# --- client API OPNsense ------------------------------------------------------
+# --- OPNsense API client ------------------------------------------------------
 
 def _opnsense(method, path, body=None):
-    # l'API OPNsense exige un JSON valide : un POST sans corps doit porter {}
+    # The OPNsense API requires valid JSON: a POST without a body must carry {}.
     if body is None and method == "POST":
         body = {}
     data = json.dumps(body).encode() if body is not None else None
@@ -81,7 +81,7 @@ def _opnsense(method, path, body=None):
 
 
 def _search_all(path):
-    """searchBase pagine : on refait une requête si `rows` < `total`."""
+    """searchBase paginates: query again if `rows` < `total`."""
     out = _opnsense("GET", path)
     rows = out.get("rows") or []
     total = int(out.get("total") or len(rows))
@@ -91,7 +91,7 @@ def _search_all(path):
     return rows
 
 
-# --- modèle souhaité ----------------------------------------------------------
+# --- desired model ------------------------------------------------------------
 
 def _route_id(ns, name):
     return f"{ns}/{name}"
@@ -106,12 +106,12 @@ def _is_managed(entry):
 
 
 def public_routes(items):
-    """{hostname: route_id} pour les routes rattachées au listener http du Gateway public."""
+    """{hostname: route_id} for routes attached to the http listener of the public Gateway."""
     desired = {}
     for item in items:
         meta = item.get("metadata", {})
         if meta.get("deletionTimestamp"):
-            continue  # en suppression : on ne la considère plus comme désirée
+            continue  # being deleted: no longer desired
         ns = meta.get("namespace")
         rid = _route_id(ns, meta.get("name"))
         spec = item.get("spec", {})
@@ -131,10 +131,10 @@ def public_routes(items):
                 continue
             if prev is None or rid < prev:
                 if prev is not None:
-                    log.warning("hostname %s réclamé par %s et %s, on garde %s", h, prev, rid, rid)
+                    log.warning("hostname %s claimed by %s and %s, keeping %s", h, prev, rid, rid)
                 desired[h] = rid
             else:
-                log.warning("hostname %s réclamé par %s et %s, on garde %s", h, prev, rid, prev)
+                log.warning("hostname %s claimed by %s and %s, keeping %s", h, prev, rid, prev)
     return desired
 
 
@@ -180,21 +180,21 @@ def _patch_finalizers(ns, name, finalizers):
 
 
 def reconcile():
-    """Diff complet desired (cluster) vs live (Caddy), puis application. Idempotent."""
+    """Full diff desired (cluster) vs live (Caddy), then apply. Idempotent."""
     items = _custom_api().list_cluster_custom_object(
         "gateway.networking.k8s.io", "v1", "httproutes").get("items") or []
     desired = public_routes(items)
     manages = {rid for rid in desired.values()}
 
-    # Lifecycle : finalizer posé sur les routes gérées, retiré si la route sort du
-    # périmètre (parentRef/hostname retiré) ou après nettoyage d'une suppression.
+    # Lifecycle: finalizer set on managed routes, removed when a route leaves the
+    # scope (parentRef/hostname removed) or after cleanup of a deletion.
     for item in items:
         meta = item["metadata"]
         ns, name = meta["namespace"], meta["name"]
         fins = meta.get("finalizers") or []
         keep = (not meta.get("deletionTimestamp")) and _route_id(ns, name) in manages
         if not keep and FINALIZER in fins:
-            log.info("route %s/%s : retrait du finalizer", ns, name)
+            log.info("route %s/%s: removing finalizer", ns, name)
             if not PLAN_ONLY:
                 _patch_finalizers(ns, name, [f for f in fins if f != FINALIZER])
         elif keep and FINALIZER not in fins:
@@ -209,7 +209,7 @@ def reconcile():
 
     changes = []
 
-    # 1. création / mise à jour / adoption
+    # 1. create / update / adopt
     for hostname, rid in sorted(desired.items()):
         existing = next((r for r in reverses if (r.get("FromDomain") or "") == hostname), None)
         if existing is None:
@@ -223,7 +223,7 @@ def reconcile():
             continue
 
         if existing.get("description") != _marker(rid):
-            # adopte une entrée manuelle de même domaine (jamais de doublon)
+            # adopt a manual entry for the same hostname (never a duplicate)
             log.info("[plan] adopt %s (%s) -> %s", hostname, existing["uuid"], rid)
             changes.append("adopt")
             if not PLAN_ONLY:
@@ -239,7 +239,7 @@ def reconcile():
                 _opnsense("POST", "/api/caddy/reverse_proxy/addHandle",
                           {"handle": _handle_fields(existing["uuid"], rid)})
 
-    # 2. suppression des entrées gérées devenues orphelines
+    # 2. delete managed entries that became orphans
     for rev in reverses:
         if not _is_managed(rev) or rev.get("FromDomain") in desired:
             continue
@@ -247,7 +247,7 @@ def reconcile():
                  (rev.get("description") or "")[len(MARKER_PREFIX):])
         changes.append("delete")
         if not PLAN_ONLY:
-            # safeDelete : retirer les handles AVANT le reverse
+            # safeDelete: remove handles BEFORE the reverse proxy
             for h in handles_by_reverse.get(rev.get("uuid"), []):
                 _opnsense("POST", f"/api/caddy/reverse_proxy/delHandle/{h['uuid']}")
             _opnsense("POST", f"/api/caddy/reverse_proxy/delReverseProxy/{rev['uuid']}")
@@ -258,33 +258,33 @@ def reconcile():
     return changes
 
 
-# --- points d'entrée kopf -----------------------------------------------------
+# --- kopf entrypoints ---------------------------------------------------------
 
 @kopf.on.event("gateway.networking.k8s.io", "v1", "httproutes")
 def on_route_event(**_):
-    """Push : chaque événement watch déclenche un reconcile complet (modèle ArgoCD sync)."""
+    """Push: every watch event triggers a full reconcile (ArgoCD sync model)."""
     with _lock:
         try:
             changes = reconcile()
         except Exception:
-            log.exception("reconcile KO (le timer de dérive retentera)")
+            log.exception("reconcile failed (the drift timer will retry)")
             return
     if changes:
-        log.info("reconcile: %d changement(s) %s", len(changes), changes)
+        log.info("reconcile: %d change(s) %s", len(changes), changes)
 
 
 @kopf.timer("gateway.networking.k8s.io", "v1", "httproutes",
             interval=RECONCILE_INTERVAL, initial_delay=180)
 def on_drift_refresh(**_):
-    """Refresh interval : rattrape la dérive côté GUI Caddy et les échecs transitoires."""
+    """Refresh interval: catches drift made in the Caddy GUI and transient failures."""
     with _lock:
         try:
             reconcile()
         except Exception:
-            log.exception("refresh de dérive KO")
+            log.exception("drift refresh failed")
 
 
 if __name__ == "__main__":
-    # NB : le warning "Not enough permissions to watch" au démarrage vient du scan
-    # KopfPeering de kopf (403 sur les CRDs) — bénin, events + timer fonctionnent.
+    # Note: the "Not enough permissions to watch" warning at startup comes from
+    # kopf's KopfPeering CRD scan (403) — harmless, events + timer work fine.
     kopf.run()
