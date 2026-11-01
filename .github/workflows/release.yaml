@@ -40,14 +40,18 @@ jobs:
 
       # Fail-closed: an unverifiable check must NOT publish. "not found" is the
       # one acceptable no; every other failure (network, auth) aborts the job.
-      - name: Refuse to republish an unchanged chart version
+      # Fail-closed: an unverifiable check must NOT publish. "not found" is the
+      # one acceptable no; every other failure (network, auth) aborts the job.
+      - name: Check whether this chart version is already published
+        id: guard
         env:
           CHART_OCI: oci://ghcr.io/pemberton-cluster/charts/caddy-gateway-sync
         run: |
           VERSION=$(sed -n 's/^version: //p' charts/caddy-gateway-sync/Chart.yaml)
           if helm show chart "$CHART_OCI" --version "$VERSION" >/dev/null 2>/tmp/helm-show.err; then
             echo "chart version $VERSION is already published - bump Chart.yaml to release"
-            exit 1
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if ! grep -qi "not found" /tmp/helm-show.err; then
             echo "cannot verify whether version $VERSION is published:" >&2
@@ -56,12 +60,15 @@ jobs:
           fi
 
       - name: Package the chart
+        if: steps.guard.outputs.skip != 'true'
         run: helm package charts/caddy-gateway-sync --destination .packaged
 
       - name: Push chart to OCI registry
+        if: steps.guard.outputs.skip != 'true'
         run: helm push .packaged/*.tgz oci://ghcr.io/pemberton-cluster/charts
 
       - name: Publish chart to GitHub Pages (HTTP repo)
+        if: steps.guard.outputs.skip != 'true'
         run: |
           # Rebuild the index from the existing published charts, if any.
           git fetch origin gh-pages --depth=1 || true
@@ -73,6 +80,7 @@ jobs:
           helm repo index .pages --url https://pemberton-cluster.github.io/caddy-gateway-sync
 
       - uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
+        if: steps.guard.outputs.skip != 'true'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
