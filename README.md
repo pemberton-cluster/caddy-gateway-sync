@@ -30,6 +30,9 @@ that is the only way to catch drift made by hand in the Caddy GUI.
   modified or deleted; manual entries are never touched.
 - **Adoption**: an existing manual entry for the same hostname is marked, not
   duplicated (Caddy refuses a Caddyfile with two sites at the same address).
+  Adoption rewrites the entry and deletes it when the route goes away, so it
+  requires explicit intent: annotation `caddy-gateway-sync/adopt: "true"` on
+  the HTTPRoute. Entries already owned by the operator are re-marked without it.
 - **Deletion**: `delHandle` then `delReverseProxy` (plugin safeDelete order).
 - **A single reload** (`/api/caddy/service/reconfigure`) per pass, whatever the
   number of changes. A failed reload leaves Caddy on the previous config.
@@ -60,9 +63,15 @@ that is the only way to catch drift made by hand in the Caddy GUI.
      OPNSENSE_API_SECRET: <secret>
    ```
 
-   ... and set `opnsense.existingSecret=caddy-gateway-sync`, or let the chart
-   create the Secret from `opnsense.apiKey`/`apiSecret` values (fine for
-   testing, avoid for GitOps — prefer SealedSecrets / ExternalSecrets).
+   ... and set `opnsense.existingSecret=caddy-gateway-sync`. The chart never
+   takes credentials from values (no `apiKey`/`apiSecret` keys): create the
+   Secret yourself — SealedSecrets / ExternalSecrets keep them out of git.
+
+   TLS verification of the API is on by default (the key/secret travel as Basic
+   auth on that connection). If the firewall certificate is issued by a private
+   CA, put the CA in a Secret under the key `ca.crt` and set
+   `opnsense.caSecret=<secret>`; `opnsense.tlsInsecure="1"` is an explicit
+   opt-out.
 
 4. Install the chart:
 
@@ -89,9 +98,9 @@ ArgoCD users: multi-source Application with `oci://` (native OCI mode) or a
 | Key | Default | Description |
 |---|---|---|
 | `opnsense.url` | `""` | Base URL of the OPNsense API |
-| `opnsense.existingSecret` | `""` | Use this Secret instead of creating one |
-| `opnsense.apiKey` / `opnsense.apiSecret` | `""` | Credentials when the chart creates the Secret |
-| `opnsense.tlsInsecure` | `"1"` | `"0"` = verify the API TLS certificate (prefer trusting the firewall CA) |
+| `opnsense.existingSecret` | `""` | Secret with `OPNSENSE_URL`, `OPNSENSE_API_KEY`, `OPNSENSE_API_SECRET` |
+| `opnsense.caSecret` | `""` | Secret with the firewall CA (`ca.crt` key), trusted for the API connection |
+| `opnsense.tlsInsecure` | `"0"` | `"1"` = disable API TLS verification (explicit opt-out; prefer `opnsense.caSecret`) |
 | `gateway.namespace` / `gateway.name` | `gateway-system` / `public` | Gateway to observe |
 | `gateway.listener` | `http` | HTTP listener name on that Gateway |
 | `upstream.host` / `upstream.port` | `10.10.16.38` / `"80"` | Gateway VIP Caddy proxies to |

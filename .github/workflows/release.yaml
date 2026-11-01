@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4.2.0
 
@@ -25,32 +27,45 @@ jobs:
           helm lint charts/caddy-gateway-sync
           helm template test charts/caddy-gateway-sync > /dev/null
 
+      - name: Refuse to republish an unchanged chart version
+        run: |
+          VERSION=$(sed -n 's/^version: //p' charts/caddy-gateway-sync/Chart.yaml)
+          if curl -sfL "https://pemberton-cluster.github.io/caddy-gateway-sync/index.yaml" \
+             | grep -q "version: $VERSION"; then
+            echo "chart version $VERSION is already published - bump Chart.yaml to release"
+            exit 1
+          fi
+
       - name: Package the chart
         run: helm package charts/caddy-gateway-sync --destination .packaged
 
       - name: Log in to ghcr.io
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
-            -u ${{ github.actor }} --password-stdin
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
       - name: Push chart to OCI registry
         run: helm push .packaged/*.tgz oci://ghcr.io/pemberton-cluster/caddy-gateway-sync
 
       - name: Publish chart to GitHub Pages (HTTP repo)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           # Rebuild the index from the existing published charts, if any.
           git fetch origin gh-pages --depth=1 || true
           mkdir -p .pages
-          if git rev-parse --verify origin/gh-pages >/dev/null 2>&1; then
-            git archive origin/gh-pages | tar -x -C .pages
+          if git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+            git archive FETCH_HEAD | tar -x -C .pages
           fi
           cp .packaged/*.tgz .pages/
           helm repo index .pages --url https://pemberton-cluster.github.io/caddy-gateway-sync
           cd .pages
           git init -q -b gh-pages
-          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -qm "charts: release $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git commit -qm "charts: release ${GITHUB_SHA}"
+          # Token stays out of .git/config and argv: checkout-style extraheader.
+          git config http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
           git push -q -f origin gh-pages

@@ -9,7 +9,9 @@ interval, which catches drift made by hand in the Caddy GUI.
 Ownership: only Caddy entries whose `description` starts with MARKER_PREFIX are
 modified or deleted. An existing unmarked entry for the same hostname is ADOPTED
 (marked), never duplicated: Caddy refuses to load a Caddyfile with two sites for
-the same address.
+the same address. Adoption rewrites the entry and deletes it on cleanup, so it
+requires explicit intent: the ADOPT_ANNOTATION annotation set to "true" on the
+HTTPRoute (entries already owned by the operator are re-marked without it).
 
 Public route convention: parentRef -> Gateway GATEWAY_NAME/GATEWAY_NAMESPACE with
 sectionName `http` (or no sectionName). A route attached only to an https-* listener
@@ -39,15 +41,24 @@ PLAN_ONLY = os.environ.get("PLAN_ONLY", "0") == "1"
 
 MARKER_PREFIX = os.environ.get("MARKER_PREFIX", "[gitops] httproute:")
 FINALIZER = os.environ.get("CADDY_FINALIZER", "caddy-gateway-sync/httproute")
+# Adopting an unmarked Caddy entry requires this annotation = "true" on the
+# claiming HTTPRoute: adoption rewrites the entry now and deletes it when the
+# route goes away, so an unmarked entry must never be claimed silently.
+ADOPT_ANNOTATION = os.environ.get("CADDY_ADOPT_ANNOTATION", "caddy-gateway-sync/adopt")
 
 OPNSENSE_URL = os.environ.get("OPNSENSE_URL", "").rstrip("/")
 API_KEY = os.environ.get("OPNSENSE_API_KEY", "")
 API_SECRET = os.environ.get("OPNSENSE_API_SECRET", "")
 
+# API credentials travel as Basic auth over this connection: verification stays
+# on unless explicitly disabled. OPNSENSE_TLS_CA trusts a private CA;
+# OPNSENSE_TLS_INSECURE=1 is an explicit opt-out.
 _tls = ssl.create_default_context()
-if os.environ.get("OPNSENSE_TLS_INSECURE", "1") == "1":
+if os.environ.get("OPNSENSE_TLS_INSECURE", "0") == "1":
     _tls.check_hostname = False
     _tls.verify_mode = ssl.CERT_NONE
+elif os.environ.get("OPNSENSE_TLS_CA"):
+    _tls.load_verify_locations(os.environ["OPNSENSE_TLS_CA"])
 
 # Serializes OPNsense writes + reload: never two concurrent reconfigures.
 _lock = threading.Lock()
@@ -103,6 +114,10 @@ def _marker(route_id):
 
 def _is_managed(entry):
     return (entry.get("description") or "").startswith(MARKER_PREFIX)
+
+
+def _adopt_allowed(item):
+    return (item.get("metadata", {}).get("annotations") or {}).get(ADOPT_ANNOTATION) == "true"
 
 
 def public_routes(items):
@@ -185,6 +200,7 @@ def reconcile():
         "gateway.networking.k8s.io", "v1", "httproutes").get("items") or []
     desired = public_routes(items)
     manages = {rid for rid in desired.values()}
+    items_by_rid = {_route_id(i["metadata"]["namespace"], i["metadata"]["name"]): i for i in items}
 
     # Lifecycle: finalizer set on managed routes, removed when a route leaves the
     # scope (parentRef/hostname removed) or after cleanup of a deletion.
@@ -223,6 +239,12 @@ def reconcile():
             continue
 
         if existing.get("description") != _marker(rid):
+            if not _is_managed(existing) and not _adopt_allowed(items_by_rid.get(rid)):
+                # Claiming a manual entry rewrites it now and deletes it when the
+                # route goes away: require explicit intent, leave it untouched.
+                log.warning("[plan] manual entry %s not adopted, set %s=\"true\" on %s to adopt it",
+                            hostname, ADOPT_ANNOTATION, rid)
+                continue
             # adopt a manual entry for the same hostname (never a duplicate)
             log.info("[plan] adopt %s (%s) -> %s", hostname, existing["uuid"], rid)
             changes.append("adopt")
@@ -230,8 +252,17 @@ def reconcile():
                 _opnsense("POST", f"/api/caddy/reverse_proxy/setReverseProxy/{existing['uuid']}",
                           {"reverse": _reverse_fields(hostname, rid)})
 
-        ours = [h for h in handles_by_reverse.get(existing["uuid"], [])
-                if _handle_matches(h, existing["uuid"], rid)]
+        rev_handles = handles_by_reverse.get(existing["uuid"], [])
+        # Handles that no longer match must go (upstream change, adopted entry
+        # with its own handle): leaving one keeps the old backend routed
+        # alongside the new one.
+        for h in rev_handles:
+            if not _handle_matches(h, existing["uuid"], rid):
+                log.info("[plan] handle delete %s (%s)", hostname, h["uuid"])
+                changes.append("handle")
+                if not PLAN_ONLY:
+                    _opnsense("POST", f"/api/caddy/reverse_proxy/delHandle/{h['uuid']}")
+        ours = [h for h in rev_handles if _handle_matches(h, existing["uuid"], rid)]
         if not ours:
             log.info("[plan] handle create %s", hostname)
             changes.append("handle")

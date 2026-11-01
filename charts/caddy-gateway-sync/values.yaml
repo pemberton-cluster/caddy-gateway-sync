@@ -5,15 +5,19 @@
 opnsense:
   # Base URL of the OPNsense API, e.g. https://opnsense.lan:8443
   url: ""
-  # API credentials. Either create a Secret yourself and set existingSecret,
-  # or set apiKey/apiSecret to have the chart create one (NOT recommended for
-  # GitOps: prefer an external secret manager or a SealedSecret).
+  # Name of a Secret carrying the API connection: keys OPNSENSE_URL (optional),
+  # OPNSENSE_API_KEY and OPNSENSE_API_SECRET. The chart never takes credentials
+  # from values — create the Secret yourself (SealedSecrets / ExternalSecrets)
+  # so nothing sensitive can end up in git.
   existingSecret: ""
-  apiKey: ""
-  apiSecret: ""
-  # Verify the OPNsense API TLS certificate. Keep false ONLY when the firewall
-  # uses a self-signed certificate; prefer trusting its CA instead.
-  tlsInsecure: "1"
+  # Verify the OPNsense API TLS certificate: on by default, the API key/secret
+  # travel as Basic auth on that connection. To trust a private CA, set
+  # caSecret to a Secret holding the firewall CA under the key `ca.crt`.
+  # "1" disables verification entirely — explicit opt-out only.
+  tlsInsecure: "0"
+  # Name of a Secret containing the firewall CA certificate (key `ca.crt`),
+  # mounted into the pod and trusted for the OPNsense API connection.
+  caSecret: ""
 
 # -- What to watch and where to proxy ------------------------------------------
 

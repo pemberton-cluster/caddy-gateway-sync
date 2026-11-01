@@ -110,6 +110,10 @@ spec:
                 secretKeyRef: { name: {{ include "caddy-gateway-sync.secretName" . }}, key: OPNSENSE_API_SECRET, optional: true }
             - name: OPNSENSE_TLS_INSECURE
               value: {{ .Values.opnsense.tlsInsecure | quote }}
+            {{- if .Values.opnsense.caSecret }}
+            - name: OPNSENSE_TLS_CA
+              value: /etc/caddy-gateway-sync/opnsense-ca/ca.crt
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -124,6 +128,11 @@ spec:
             - name: deps
               mountPath: /opt/deps
               readOnly: true
+            {{- if .Values.opnsense.caSecret }}
+            - name: opnsense-ca
+              mountPath: /etc/caddy-gateway-sync/opnsense-ca
+              readOnly: true
+            {{- end }}
             - name: tmp
               mountPath: /tmp
       volumes:
@@ -132,5 +141,10 @@ spec:
             name: {{ include "caddy-gateway-sync.fullname" . }}
         - name: deps
           emptyDir: {}
+        {{- if .Values.opnsense.caSecret }}
+        - name: opnsense-ca
+          secret:
+            secretName: {{ .Values.opnsense.caSecret }}
+        {{- end }}
         - name: tmp
           emptyDir: {}
