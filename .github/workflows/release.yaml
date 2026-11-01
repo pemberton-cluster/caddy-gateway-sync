@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "charts/**"
+      - "tests/**"
       - ".github/workflows/release.yaml"
   workflow_dispatch:
 

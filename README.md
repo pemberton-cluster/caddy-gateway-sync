@@ -87,7 +87,7 @@ that is the only way to catch drift made by hand in the Caddy GUI.
    ```bash
    # From the OCI registry
    helm install caddy-gateway-sync \
-     oci://ghcr.io/pemberton-cluster/charts/caddy-gateway-sync --version 0.1.0 \
+     oci://ghcr.io/pemberton-cluster/charts/caddy-gateway-sync --version 0.2.0 \
      --namespace gateway-system \
      --set opnsense.existingSecret=caddy-gateway-sync
 
